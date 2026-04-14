@@ -1,0 +1,38 @@
+# Build artifacts
+*.o
+*.out
+*.a
+*.so
+*.dylib
+*.dll
+
+# Executables
+tests/test
+examples/ex
+
+# Docs
+NOTES.md
+TODO.md
+
+# Make / compiler outputs
+/build/
+/bin/
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+
+# Coverage / analysis
+*.gcda
+*.gcno
+*.gcov
+coverage/
