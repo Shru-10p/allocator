@@ -1,5 +1,5 @@
 #include "alloc.h"
-#include "internal.h"
+#include "./internal/internal.h"
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -72,7 +72,7 @@ void debug_print_heap(void) {
     block_meta_t *cur = g_base;
     size_t idx = 0;
 
-    printf("=== heap dump ===\n");
+    printf("--- heap dump ---\n");
     while (cur != NULL) {
         if (!is_valid_block(cur)) {
             printf("[%zu] INVALID BLOCK at %p\n", idx, (void *)cur);
@@ -91,5 +91,5 @@ void debug_print_heap(void) {
         cur = cur->next;
         idx++;
     }
-    printf("=================\n");
+    printf("-----------------\n");
 }

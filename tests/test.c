@@ -14,25 +14,14 @@
         } \
     } while (0)
 
-#define RUN_TEST(fn) \
-    do { \
-        printf("Running %s...\n", #fn); \
-        if (fn()) { \
-            printf("PASS: %s\n\n", #fn); \
-            passed++; \
-        } else { \
-            printf("FAIL: %s\n\n", #fn); \
-            failed++; \
-        } \
-    } while (0)
-
 typedef int (*test_fn_t)(void);
 
+// Runs a test function in a separate process to isolate heap state and prevent crashes from affecting other tests.
 static int run_test_isolated(test_fn_t fn, const char *name, int *passed, int *failed) {
     pid_t pid;
     int status;
 
-    printf("Running %s...\n", name);
+    printf("Running test [%s]\n", name);
     fflush(NULL);
 
     pid = fork();
@@ -51,12 +40,12 @@ static int run_test_isolated(test_fn_t fn, const char *name, int *passed, int *f
     }
 
     if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
-        printf("PASS: %s\n\n", name);
+        printf("PASS\n\n");
         (*passed)++;
         return 1;
     }
 
-    printf("FAIL: %s\n\n", name);
+    printf("FAIL\n\n");
     (*failed)++;
     return 0;
 }
@@ -92,23 +81,42 @@ static int test_write_and_read_memory(void) {
     return 1;
 }
 
-static int test_free_and_reuse_block(void) {
+static int test_split_creates_remainder_block(void) {
     size_t before = block_count();
 
-    void *p1 = my_malloc(80);
-    TEST_ASSERT(p1 != NULL, "first allocation failed");
-    size_t after_first = block_count();
-    TEST_ASSERT(after_first == before + 1, "expected one new block after first allocation");
+    void *p1 = my_malloc(128);
+    TEST_ASSERT(p1 != NULL, "initial large allocation failed");
+    TEST_ASSERT(block_count() == before + 1, "expected one block after large allocation");
 
     my_free(p1);
-    TEST_ASSERT(validate_heap() == 1, "heap invalid after my_free");
+    TEST_ASSERT(validate_heap() == 1, "heap invalid after freeing large block");
 
-    void *p2 = my_malloc(23);
+    void *p2 = my_malloc(32);
+    TEST_ASSERT(p2 != NULL, "second allocation failed");
+    TEST_ASSERT(p2 == p1, "expected allocator to reuse front of freed block");
+    TEST_ASSERT(block_count() == before + 2, "expected split to create a remainder block");
+    TEST_ASSERT(validate_heap() == 1, "heap invalid after splitting free block");
+
+    my_free(p2);
+    return 1;
+}
+
+static int test_no_split_for_tiny_remainder(void) {
+    size_t before = block_count();
+
+    void *p1 = my_malloc(64);
+    TEST_ASSERT(p1 != NULL, "initial allocation failed");
+    TEST_ASSERT(block_count() == before + 1, "expected one block after initial allocation");
+
+    my_free(p1);
+    TEST_ASSERT(validate_heap() == 1, "heap invalid after freeing initial block");
+
+    /* 56 leaves only 8 bytes from a 64-byte block, which is too small for metadata + payload remainder. */
+    void *p2 = my_malloc(56);
     TEST_ASSERT(p2 != NULL, "second allocation failed");
     TEST_ASSERT(p2 == p1, "allocator did not reuse compatible free block");
-
-    size_t after_second = block_count();
-    TEST_ASSERT(after_second == after_first, "reused allocation should not create a new block");
+    TEST_ASSERT(block_count() == before + 1, "tiny remainder should not be split into a new block");
+    TEST_ASSERT(validate_heap() == 1, "heap invalid after no-split allocation");
 
     my_free(p2);
     return 1;
@@ -148,10 +156,11 @@ int main(void) {
     run_test_isolated(test_malloc_returns_non_null, "malloc returns non null", &passed, &failed);
     run_test_isolated(test_malloc_zero_returns_null, "malloc zero returns null", &passed, &failed);
     run_test_isolated(test_write_and_read_memory, "writee and read memory", &passed, &failed);
-    run_test_isolated(test_free_and_reuse_block, "free and reuse block", &passed, &failed);
+    run_test_isolated(test_split_creates_remainder_block, "split creates remainder block", &passed, &failed);
+    run_test_isolated(test_no_split_for_tiny_remainder, "no split for tiny remainder", &passed, &failed);
     run_test_isolated(test_multiple_allocations, "multiple allocations", &passed, &failed);
     run_test_isolated(test_free_null_is_safe, "free null is safe", &passed, &failed);
 
     printf("Summary: passed=%d failed=%d\n", passed, failed);
-    return failed == 0 ? 0 : 1;
+    return !(!failed);
 }
