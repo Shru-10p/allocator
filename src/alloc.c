@@ -1,7 +1,7 @@
 #define _DEFAULT_SOURCE
 
-#include "mini_alloc.h"
-#include "mini_alloc_internal.h"
+#include "alloc.h"
+#include "internal.h"
 
 #include <limits.h>
 #include <stdint.h>
@@ -9,7 +9,7 @@
 
 block_meta_t *g_base = NULL;
 
-int mm_is_valid_block(const block_meta_t *b) {
+int is_valid_block(const block_meta_t *b) {
     return (b != NULL) && (b->magic == BLOCK_MAGIC) && (b->size != 0);
 }
 
@@ -18,8 +18,8 @@ static block_meta_t *find_free_block(block_meta_t **last, size_t size) {
     *last = NULL;
 
     while (cur != NULL) {
-        if (!mm_is_valid_block(cur)) {
-            mm_debug_log("find_free_block: encountered invalid block %p", (void *)cur);
+        if (!is_valid_block(cur)) {
+            debug_log("find_free_block: encountered invalid block %p", (void *)cur);
             return NULL;
         }
 
@@ -49,18 +49,18 @@ static block_meta_t *request_space(block_meta_t *last, size_t size) {
         g_base = b;
     }
 
-    mm_debug_log("request_space: new block=%p size=%zu", (void *)b, size);
+    debug_log("request_space: new block=%p size=%zu", (void *)b, size);
     return b;
 }
 
-void *mm_malloc(size_t size) {
+void *my_malloc(size_t size) {
     if (size == 0) { return NULL; }
 
     size = ALIGN8(size);
-    mm_debug_log("mm_malloc(%zu)", size);
+    debug_log("malloc(%zu)", size);
 
     if (size > (size_t)(INTPTR_MAX - (intptr_t)META_SIZE)) {
-        mm_debug_log("mm_malloc: requested size too large (%zu)", size);
+        debug_log("malloc: requested size too large (%zu)", size);
         return NULL;
     }
 
@@ -69,34 +69,34 @@ void *mm_malloc(size_t size) {
 
     if (b != NULL) {
         b->free = 0;
-        mm_debug_log("mm_malloc: reusing free block=%p size=%zu", (void *)b, b->size);
+        debug_log("malloc: reusing free block=%p size=%zu", (void *)b, b->size);
         return (void *)(b + 1);
     }
 
     b = request_space(last, size);
     if (b == NULL) {
-        mm_debug_log("mm_malloc: sbrk failed");
+        debug_log("malloc: sbrk failed");
         return NULL;
     }
 
     return (void *)(b + 1);
 }
 
-void mm_free(void *ptr) {
+void my_free(void *ptr) {
     if (ptr == NULL) { return; }
 
     block_meta_t *b = ((block_meta_t *)ptr) - 1;
 
-    if (!mm_is_valid_block(b)) {
-        mm_debug_log("mm_free: invalid pointer %p", ptr);
+    if (!is_valid_block(b)) {
+        debug_log("free: invalid pointer %p", ptr);
         return;
     }
 
     if (b->free) {
-        mm_debug_log("mm_free: double free or duplicate free on block=%p", (void *)b);
+        debug_log("free: double free or duplicate free on block=%p", (void *)b);
         return;
     }
 
     b->free = 1;
-    mm_debug_log("mm_free: freed block=%p size=%zu", (void *)b, b->size);
+    debug_log("free: freed block=%p size=%zu", (void *)b, b->size);
 }

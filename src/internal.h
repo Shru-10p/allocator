@@ -1,5 +1,5 @@
-#ifndef MINI_ALLOC_INTERNAL_H
-#define MINI_ALLOC_INTERNAL_H
+#ifndef ALLOC_INTERNAL_H
+#define ALLOC_INTERNAL_H
 
 #include <stddef.h>
 #include <stdint.h>
@@ -19,7 +19,7 @@ typedef struct block_meta {
 
 extern block_meta_t *g_base;
 
-int mm_is_valid_block(const block_meta_t *b);
-void mm_debug_log(const char *fmt, ...);
+int is_valid_block(const block_meta_t *b);
+void debug_log(const char *fmt, ...);
 
-#endif
+#endif // ALLOC_INTERNAL_H

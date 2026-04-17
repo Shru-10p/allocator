@@ -1,8 +1,8 @@
-# Mini Memory Allocator
+# Memory Allocator
 
 A small heap allocator in C.
 
-Right now it is a **single-threaded, `sbrk()`-backed, first-fit allocator** with:
+Right now it is a **single-threaded, first-fit allocator** with:
 
 - 8-byte alignment
 - inline block metadata
@@ -28,10 +28,10 @@ allocator/
 ├── examples/
 │   └── example.c
 ├── src/
-│   ├── mini_alloc.h
-│   ├── mini_alloc.c
-│   ├── mini_alloc_debug.c
-│   └── mini_alloc_internal.h
+│   ├── alloc.h
+│   ├── alloc.c
+│   ├── alloc_debug.c
+│   └── alloc_internal.h
 └── tests/
     └── test.c
 ```
@@ -40,8 +40,8 @@ allocator/
 
 The allocator exposes two public functions:
 
-- `void *mm_malloc(size_t size);`
-- `void  mm_free(void *ptr);`
+- `void *my_malloc(size_t size);`
+- `void  my_free(void *ptr);`
 
 Internally, it keeps one global block list. Each block has a header immediately before the user payload.
 
@@ -64,7 +64,7 @@ A request follows this path:
 4. If found, mark it in-use and return it
 5. Otherwise call `sbrk()` to grow the heap and append a new block
 
-`mm_free()` only marks a block as free. It does **not** split or coalesce blocks yet.
+`my_free()` only marks a block as free. It does **not** split or coalesce blocks yet.
 
 ## Build
 
@@ -90,14 +90,14 @@ make run
 The implementation includes a small debug hook:
 
 ```c
-mm_set_debug(1);
+set_debug(1);
 ```
 
 Then rebuild and run tests or your own driver.
 
 ## API
 
-### `void *mm_malloc(size_t size);`
+### `void *my_malloc(size_t size);`
 
 Allocates `size` bytes from the process heap.
 
@@ -107,13 +107,13 @@ Behavior:
 - returns an 8-byte-aligned pointer on success
 - returns `NULL` if `sbrk()` fails
 
-### `void mm_free(void *ptr);`
+### `void my_free(void *ptr);`
 
 Marks a previously allocated block as free.
 
 Behavior:
 
-- `mm_free(NULL)` is a no-op
+- `my_free(NULL)` is a no-op
 - it currently does not detect every invalid pointer
 - it currently does not coalesce neighboring free blocks
 
@@ -121,10 +121,10 @@ Behavior:
 
 The header also exposes these helpers:
 
-- `void mm_set_debug(int enabled);`
-- `void mm_debug_print_heap(void);`
-- `int  mm_validate_heap(void);`
-- `size_t mm_block_count(void);`
+- `void set_debug(int enabled);`
+- `void debug_print_heap(void);`
+- `int  validate_heap(void);`
+- `size_t block_count(void);`
 
 These are included for testing and debugging.
 
