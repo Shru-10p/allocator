@@ -9,6 +9,7 @@ Right now it is a **single-threaded, first-fit allocator** with:
 - one global doubly-linked block list
 - free-block reuse with first-fit search
 - block splitting on reuse when remainder is large enough
+- automatic coalescing of adjacent free blocks to reduce fragmentation
 
 ## Repository layout
 
@@ -58,7 +59,7 @@ A request follows this path:
 4. If found, split it when possible, then mark it in-use and return it
 5. Otherwise call `sbrk()` to grow the heap and append a new block
 
-`my_free()` only marks a block as free. It does **not** coalesce neighboring free blocks yet.
+`my_free()` marks a block as free and then coalesces it with any adjacent free blocks (both backward and forward in the linked list) to reduce fragmentation.
 
 ## Build
 
@@ -103,13 +104,13 @@ Behavior:
 
 ### `void my_free(void *ptr);`
 
-Marks a previously allocated block as free.
+Marks a previously allocated block as free and coalesces it with adjacent free blocks.
 
 Behavior:
 
 - `my_free(NULL)` is a no-op
 - it currently does not detect every invalid pointer
-- it currently does not coalesce neighboring free blocks
+- it coalesces adjacent free blocks backward and forward in the linked list
 
 ### Debug / inspection helpers
 

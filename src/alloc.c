@@ -34,7 +34,7 @@ static block_meta_t *find_free_block(block_meta_t **last, size_t size) {
 
 static block_meta_t *request_space(block_meta_t *last, size_t size) {
     void *mem = sbrk((intptr_t)(META_SIZE + size));
-    if (mem == (void *)-1) { return NULL; }
+    if (mem == (void *)-1) return NULL;
 
     block_meta_t *b = (block_meta_t *)mem;
     b->size  = size;
@@ -43,11 +43,8 @@ static block_meta_t *request_space(block_meta_t *last, size_t size) {
     b->magic = BLOCK_MAGIC;
     b->free  = 0;
 
-    if (last != NULL) {
-        last->next = b;
-    } else {
-        g_base = b;
-    }
+    if (last != NULL) { last->next = b; }
+    else { g_base = b; }
 
     debug_log("request_space: new block=%p size=%zu", (void *)b, size);
     return b;
@@ -90,6 +87,47 @@ static void split_block(block_meta_t *b, size_t requested){
     b->size = requested;
     b->next = remainder;
     debug_log("split_block: split block=%p into allocated size=%zu and free remainder=%p size=%zu", (void *)b, requested, (void *)remainder, remainder->size);
+}
+
+static void coalesce(block_meta_t *b) {
+    if (b == NULL) { return; }
+    if (!is_valid_block(b)) {
+        debug_log("coalesce: invalid block %p", (void *)b);
+        return;
+    }
+    if (!b->free) {
+        debug_log("coalesce: block %p is not free", (void *)b);
+        return;
+    }
+    // coalesce backward
+    while (b->prev != NULL) {
+        block_meta_t *prev = b->prev;
+        if (!is_valid_block(prev)) {
+            debug_log("coalesce: invalid previous block %p", (void *)prev);
+            break;
+        }
+        if (!prev->free) { break; }
+
+        debug_log("coalesce: coalescing with previous block=%p size=%zu", (void *)prev, prev->size);
+        prev->size += META_SIZE + b->size;
+        prev->next = b->next;
+        if (b->next != NULL) { b->next->prev = prev; }
+        b = prev;
+    }
+    // coalesce forward
+    while (b->next != NULL) {
+        block_meta_t *next = b->next;
+        if (!is_valid_block(next)) {
+            debug_log("coalesce: invalid next block %p", (void *)next);
+            break;
+        }
+        if (!next->free) { break; }
+
+        debug_log("coalesce: coalescing with next block=%p size=%zu", (void *)next, next->size);
+        b->size += META_SIZE + next->size;
+        b->next = next->next;
+        if (next->next != NULL) { next->next->prev = b; }
+    }
 }
 
 void *my_malloc(size_t size) {
@@ -138,5 +176,6 @@ void my_free(void *ptr) {
     }
 
     b->free = 1;
-    debug_log("free: freed block=%p size=%zu", (void *)b, b->size);
+    coalesce(b);
+    debug_log("free: block=%p size=%zu marked free and coalesced if possible", (void *)b, b->size);
 }

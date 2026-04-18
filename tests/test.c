@@ -16,6 +16,16 @@
 
 typedef int (*test_fn_t)(void);
 
+static int fill_and_verify(char *ptr, size_t size, unsigned char value) {
+    memset(ptr, value, size);
+
+    for (size_t i = 0; i < size; i++) {
+        TEST_ASSERT((unsigned char)ptr[i] == value, "payload contents mismatch");
+    }
+
+    return 1;
+}
+
 // Runs a test function in a separate process to isolate heap state and prevent crashes from affecting other tests.
 static int run_test_isolated(test_fn_t fn, const char *name, int *passed, int *failed) {
     pid_t pid;
@@ -45,80 +55,103 @@ static int run_test_isolated(test_fn_t fn, const char *name, int *passed, int *f
         return 1;
     }
 
-    printf("FAIL\n\n");
+    printf("\n\n");
     (*failed)++;
     return 0;
 }
 
-static int test_malloc_returns_non_null(void) {
+static int test_basic_allocation_and_null_ops(void) {
+    void *zero = my_malloc(0);
+
+    TEST_ASSERT(zero == NULL, "my_malloc(0) should return NULL");
+    TEST_ASSERT(validate_heap() == 1, "heap validation failed after my_malloc(0)");
+
+    my_free(NULL);
+    TEST_ASSERT(validate_heap() == 1, "heap invalid after my_free(NULL)");
+
     void *p = my_malloc(32);
     TEST_ASSERT(p != NULL, "malloc(32) returned NULL");
     TEST_ASSERT((((uintptr_t)p) & 7ULL) == 0, "returned pointer is not 8-byte aligned");
+    TEST_ASSERT(fill_and_verify((char *)p, 32, 0x5A), "payload contents mismatch");
     TEST_ASSERT(validate_heap() == 1, "heap validation failed after allocation");
     my_free(p);
     return 1;
 }
 
-static int test_malloc_zero_returns_null(void) {
-    void *p = my_malloc(0);
-    TEST_ASSERT(p == NULL, "my_malloc(0) should return NULL");
-    TEST_ASSERT(validate_heap() == 1, "heap validation failed after my_malloc(0)");
-    return 1;
-}
+static int test_split_behavior(void) {
+    size_t baseline = block_count();
 
-static int test_write_and_read_memory(void) {
-    char *p = (char *)my_malloc(64);
-    TEST_ASSERT(p != NULL, "allocation failed");
+    void *large = my_malloc(128);
+    TEST_ASSERT(large != NULL, "initial large allocation failed");
+    TEST_ASSERT(block_count() == baseline + 1, "expected one block after large allocation");
 
-    memset(p, 0x5A, 64);
-
-    for (int i = 0; i < 64; i++) {
-        TEST_ASSERT((unsigned char)p[i] == 0x5A, "payload contents mismatch");
-    }
-
-    TEST_ASSERT(validate_heap() == 1, "heap validation failed after write/read");
-    my_free(p);
-    return 1;
-}
-
-static int test_split_creates_remainder_block(void) {
-    size_t before = block_count();
-
-    void *p1 = my_malloc(128);
-    TEST_ASSERT(p1 != NULL, "initial large allocation failed");
-    TEST_ASSERT(block_count() == before + 1, "expected one block after large allocation");
-
-    my_free(p1);
+    my_free(large);
     TEST_ASSERT(validate_heap() == 1, "heap invalid after freeing large block");
 
-    void *p2 = my_malloc(32);
-    TEST_ASSERT(p2 != NULL, "second allocation failed");
-    TEST_ASSERT(p2 == p1, "expected allocator to reuse front of freed block");
-    TEST_ASSERT(block_count() == before + 2, "expected split to create a remainder block");
+    void *split = my_malloc(32);
+    TEST_ASSERT(split != NULL, "split allocation failed");
+    TEST_ASSERT(split == large, "expected allocator to reuse front of freed block");
+    TEST_ASSERT(block_count() == baseline + 2, "expected split to create a remainder block");
     TEST_ASSERT(validate_heap() == 1, "heap invalid after splitting free block");
 
-    my_free(p2);
+    my_free(split);
+    TEST_ASSERT(validate_heap() == 1, "heap invalid after freeing split block");
+
+    baseline = block_count();
+
+    void *small = my_malloc(64);
+    TEST_ASSERT(small != NULL, "medium allocation failed");
+    TEST_ASSERT(block_count() == baseline + 1, "expected 64-byte allocation to split the free block");
+    my_free(small);
+    TEST_ASSERT(validate_heap() == 1, "heap invalid after freeing medium block");
+    void *no_split = my_malloc(56);
+    TEST_ASSERT(no_split != NULL, "tiny remainder allocation failed");
+    TEST_ASSERT(no_split == small, "expected allocator to reuse the coalesced block front");
+    TEST_ASSERT(block_count() == baseline + 1, "tiny remainder should not be split into a new block");
+    TEST_ASSERT(validate_heap() == 1, "heap invalid after no-split allocation");
+
+    my_free(no_split);
+    my_free(small);
     return 1;
 }
 
-static int test_no_split_for_tiny_remainder(void) {
-    size_t before = block_count();
+static int test_coalescing_behavior(void) {
+    size_t baseline = block_count();
 
-    void *p1 = my_malloc(64);
-    TEST_ASSERT(p1 != NULL, "initial allocation failed");
-    TEST_ASSERT(block_count() == before + 1, "expected one block after initial allocation");
+    void *a = my_malloc(16);
+    void *b = my_malloc(40);
+    TEST_ASSERT(a != NULL && b != NULL, "failed to allocate two adjacent blocks");
+    TEST_ASSERT(block_count() == baseline + 2, "expected two blocks in short coalescing setup");
 
-    my_free(p1);
-    TEST_ASSERT(validate_heap() == 1, "heap invalid after freeing initial block");
+    my_free(b);
+    my_free(a);
+    TEST_ASSERT(validate_heap() == 1, "heap invalid after two-block coalescing");
+    TEST_ASSERT(block_count() == baseline + 1, "expected adjacent frees to coalesce into one block");
 
-    /* 56 leaves only 8 bytes from a 64-byte block, which is too small for metadata + payload remainder. */
-    void *p2 = my_malloc(56);
-    TEST_ASSERT(p2 != NULL, "second allocation failed");
-    TEST_ASSERT(p2 == p1, "allocator did not reuse compatible free block");
-    TEST_ASSERT(block_count() == before + 1, "tiny remainder should not be split into a new block");
-    TEST_ASSERT(validate_heap() == 1, "heap invalid after no-split allocation");
+    baseline = block_count();
 
-    my_free(p2);
+    void *c = my_malloc(128);
+    void *d = my_malloc(128);
+    void *e = my_malloc(128);
+    void *f = my_malloc(128);
+    void *g = my_malloc(128);
+    TEST_ASSERT(c != NULL && d != NULL && e != NULL && f != NULL && g != NULL,
+                "failed to allocate five adjacent blocks");
+    TEST_ASSERT(block_count() == baseline + 5, "expected five blocks in chain");
+    my_free(c); // this coalesces with blocks a nd b from before
+    my_free(d);
+    my_free(g);
+    my_free(f);
+    printf("Block count after edge frees: %zu\n", block_count());
+    TEST_ASSERT(validate_heap() == 1, "heap invalid before center free in long-chain test");
+    TEST_ASSERT(block_count() == baseline + 2,
+                "expected edge frees to form two coalesced regions plus center block");
+
+    my_free(e);
+
+    TEST_ASSERT(validate_heap() == 1, "heap invalid after center free long-chain coalescing");
+    TEST_ASSERT(block_count() == 1, "expected all five adjacent blocks to coalesce into one block");
+
     return 1;
 }
 
@@ -132,7 +165,8 @@ static int test_multiple_allocations(void) {
     }
 
     for (int i = 0; i < 5; i++) {
-        memset(ptrs[i], i, (size_t)(16 + i * 8));
+        TEST_ASSERT(fill_and_verify((char *)ptrs[i], (size_t)(16 + i * 8), (unsigned char)i),
+                "payload contents mismatch");
     }
 
     for (int i = 0; i < 5; i++) {
@@ -143,23 +177,14 @@ static int test_multiple_allocations(void) {
     return 1;
 }
 
-static int test_free_null_is_safe(void) {
-    my_free(NULL);
-    TEST_ASSERT(validate_heap() == 1, "heap invalid after my_free(NULL)");
-    return 1;
-}
-
 int main(void) {
     int passed = 0;
     int failed = 0;
 
-    run_test_isolated(test_malloc_returns_non_null, "malloc returns non null", &passed, &failed);
-    run_test_isolated(test_malloc_zero_returns_null, "malloc zero returns null", &passed, &failed);
-    run_test_isolated(test_write_and_read_memory, "writee and read memory", &passed, &failed);
-    run_test_isolated(test_split_creates_remainder_block, "split creates remainder block", &passed, &failed);
-    run_test_isolated(test_no_split_for_tiny_remainder, "no split for tiny remainder", &passed, &failed);
+    run_test_isolated(test_basic_allocation_and_null_ops, "basic allocation and null ops", &passed, &failed);
+    run_test_isolated(test_split_behavior, "split behavior", &passed, &failed);
+    run_test_isolated(test_coalescing_behavior, "coalescing behavior", &passed, &failed);
     run_test_isolated(test_multiple_allocations, "multiple allocations", &passed, &failed);
-    run_test_isolated(test_free_null_is_safe, "free null is safe", &passed, &failed);
 
     printf("Summary: passed=%d failed=%d\n", passed, failed);
     return !(!failed);
