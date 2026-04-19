@@ -5,6 +5,7 @@
 
 #include <limits.h>
 #include <stdint.h>
+#include <string.h> // for memset
 #include <unistd.h>
 
 block_meta_t *g_base = NULL;
@@ -133,7 +134,7 @@ static void coalesce(block_meta_t *b) {
 void *my_malloc(size_t size) {
     if (size == 0) { return NULL; }
 
-    size = ALIGN8(size);
+    size = ALIGN(size);
     debug_log("malloc(%zu)", size);
 
     if (size > (size_t)(INTPTR_MAX - (intptr_t)META_SIZE)) {
@@ -158,6 +159,26 @@ void *my_malloc(size_t size) {
     }
 
     return (void *)(b + 1);
+}
+
+void *my_calloc(size_t nmemb, size_t size){
+    if (nmemb == 0 || size == 0) { return NULL; }
+
+    if (nmemb > SIZE_MAX / size) {
+        debug_log("calloc: requested size too large (nmemb=%zu, size=%zu)", nmemb, size);
+        return NULL;
+    }
+
+    size_t total_size = nmemb * size;
+    void *ptr = my_malloc(total_size);
+    if (ptr == NULL) {
+        debug_log("calloc: malloc failed for total size %zu", total_size);
+        return NULL;
+    }
+
+    memset(ptr, 0, total_size);
+    debug_log("calloc: allocated and zeroed block=%p total_size=%zu", ptr, total_size);
+    return ptr;
 }
 
 void my_free(void *ptr) {

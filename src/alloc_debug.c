@@ -69,6 +69,7 @@ int validate_heap(void) {
 }
 
 void debug_print_heap(void) {
+    if (!g_debug) { return; }
     block_meta_t *cur = g_base;
     size_t idx = 0;
 

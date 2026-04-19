@@ -4,7 +4,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define ALIGN8(x) (((x) + 7ULL) & ~7ULL)
+#define ALIGN_SIZE 8
+#define ALIGN(size) (((size) + (ALIGN_SIZE - 1)) & ~(ALIGN_SIZE - 1))
 #define BLOCK_MAGIC 0xC0FFEE42u
 
 typedef struct block_meta {

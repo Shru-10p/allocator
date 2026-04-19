@@ -1,54 +1,65 @@
 # Memory Allocator
 
-A small heap allocator in C.
+The current implementation is a single-threaded, first-fit allocator with:
 
-Right now it is a **single-threaded, first-fit allocator** with:
-
-- 8-byte alignment
-- inline block metadata
+- 8-byte payload alignment
+- inline block metadata (`block_meta_t`) before each payload
 - one global doubly-linked block list
-- free-block reuse with first-fit search
-- block splitting on reuse when remainder is large enough
-- automatic coalescing of adjacent free blocks to reduce fragmentation
+- free-block reuse via first-fit search
+- split on reuse when remainder can hold `META_SIZE + 8` bytes minimum
+- backward + forward coalescing on `my_free`
+- basic debug and heap integrity helpers
 
-## Repository layout
+## Repository Layout
 
 ```text
 allocator/
 ├── Makefile
 ├── README.md
-├── TODO.md
-├── NOTES.md
-├── gitignore
 ├── examples/
 │   └── example.c
 ├── src/
 │   ├── alloc.h
 │   ├── alloc.c
 │   ├── alloc_debug.c
-│   └── alloc_internal.h
+│   └── internal/
+│       └── internal.h
 └── tests/
     └── test.c
 ```
 
-## What it does (so far)
+## Public API Status
 
-The allocator exposes two public functions:
+Implemented:
 
 - `void *my_malloc(size_t size);`
+- `void *my_calloc(size_t nmemb, size_t size);`
 - `void  my_free(void *ptr);`
 
-Internally, it keeps one global block list. Each block has a header immediately before the user payload.
+Debug/inspection helpers:
 
-Memory layout of one block:
+- `void   set_debug(int enabled);`
+- `void   debug_print_heap(void);`
+- `int    validate_heap(void);`
+- `size_t block_count(void);`
+
+## Behavior Notes
+
+- `my_malloc(0)`, `my_calloc(0, x)` and `my_calloc(x, 0)` return `NULL`
+- `my_malloc` aligns request size to 8 bytes
+- `my_calloc` checks multiplication overflow (`nmemb > SIZE_MAX / size`) and zero-initializes memory
+- `my_free(NULL)` is a no-op
+- invalid or duplicate frees are logged/ignored in debug mode, but not fully hardened
+
+Internally, the allocator keeps one global block list.
 
 ```text
-+-------------------------+----------------------+
-| struct block_meta       | user payload bytes   |
-+-------------------------+----------------------+
-^                         ^
-|                         |
-block header              pointer returned to user
++----------------+--------------+    +----------+---------+
+| block metadata | user payload |<-->| metadata | payload |<--...
++----------------+--------------+    +----------+---------+
+^                ^
+|                |
+block header     pointer returned to user
 ```
 
 A request follows this path:
@@ -59,76 +70,41 @@ A request follows this path:
 4. If found, split it when possible, then mark it in-use and return it
 5. Otherwise call `sbrk()` to grow the heap and append a new block
 
-`my_free()` marks a block as free and then coalesces it with any adjacent free blocks (both backward and forward in the linked list) to reduce fragmentation.
+## Build And Run
 
-## Build
+Build tests + example:
 
 ```bash
 make
 ```
 
-## Run tests
+Run tests:
 
 ```bash
 make test
-./tests/test
 ```
 
-Or in one step:
+Run example program:
 
 ```bash
-make run
+make example
 ```
 
-## Run with debugging enabled
+## Debugging
 
-The implementation includes a small debug hook:
+Enable debug logging in your driver or tests:
 
 ```c
 set_debug(1);
 ```
 
-Then rebuild and run tests or your own driver.
+Then call `debug_print_heap()` and/or `validate_heap()` as needed.
 
-## API
-
-### `void *my_malloc(size_t size);`
-
-Allocates `size` bytes from the process heap.
-
-Behavior:
-
-- returns `NULL` if `size == 0`
-- returns an 8-byte-aligned pointer on success
-- returns `NULL` if `sbrk()` fails
-
-### `void my_free(void *ptr);`
-
-Marks a previously allocated block as free and coalesces it with adjacent free blocks.
-
-Behavior:
-
-- `my_free(NULL)` is a no-op
-- it currently does not detect every invalid pointer
-- it coalesces adjacent free blocks backward and forward in the linked list
-
-### Debug / inspection helpers
-
-The header also exposes these helpers:
-
-- `void set_debug(int enabled);`
-- `void debug_print_heap(void);`
-- `int  validate_heap(void);`
-- `size_t block_count(void);`
-
-These are included for testing and debugging.
-
-## Design limitations
+## Current Limits
 
 - single-threaded only
-- `O(n)` first-fit search
-- no coalescing, so fragmentation can accumulate
-- `sbrk()` only
-- no large-block `mmap()` path
-- no `calloc` / `realloc`
-- no security hardening
+- `O(n)` first-fit scan per allocation
+- `sbrk()` backend only
+- no `mmap` path for large allocations
+- `realloc` not implemented yet
+- no hard security checks (canaries/guards/quarantine)

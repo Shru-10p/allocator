@@ -1,27 +1,47 @@
 #include "../src/alloc.h"
 #include <stdio.h>
+#include <string.h>
 
 int main(void) {
-    set_debug(1);
+    set_debug(0);
 
-    // Allocate an array of 10 integers
-    int *arr = (int *)my_malloc(10 * sizeof(int));
-    if (arr == NULL) {
-        fprintf(stderr, "Allocation failed\n");
+    char *name = (char *)my_malloc(32);
+    if (!name) {
+        fprintf(stderr, "my_malloc failed\n");
         return 1;
     }
     debug_print_heap();
 
-    for(int i = 0; i < 10; i++) {
-        arr[i] = i+1;
+    strcpy(name, "hello allocator!");
+    printf("%s\n", name);
+
+    int *values = (int *)my_calloc(5, sizeof(*values));
+    if (!values) {
+        fprintf(stderr, "my_calloc failed\n");
+        my_free(name);
+        return 1;
     }
-    for (int i = 0; i < 10;i++){
-        printf("%d ", arr[i]);
+    debug_print_heap();
+
+    printf("calloc values (should start at 0): ");
+    for (int i = 0; i < 5; i++) {
+        printf("%d ", values[i]);
     }
     printf("\n");
 
+    for (int i = 0; i < 5; i++) {
+        values[i] = (i * 10);
+    }
 
-    my_free(arr);
+    printf("updated values: ");
+    for (int i = 0; i < 5; i++) {
+        printf("%d ", values[i]);
+    }
+    printf("\n");
+
+    my_free(values);
+    my_free(name);
     debug_print_heap();
+
     return 0;
 }

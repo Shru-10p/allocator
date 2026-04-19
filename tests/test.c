@@ -74,6 +74,14 @@ static int test_basic_allocation_and_null_ops(void) {
     TEST_ASSERT((((uintptr_t)p) & 7ULL) == 0, "returned pointer is not 8-byte aligned");
     TEST_ASSERT(fill_and_verify((char *)p, 32, 0x5A), "payload contents mismatch");
     TEST_ASSERT(validate_heap() == 1, "heap validation failed after allocation");
+
+    void *q = my_malloc(3);
+    TEST_ASSERT(q != NULL, "malloc(3) returned NULL");
+    TEST_ASSERT((((uintptr_t)q) & 7ULL) == 0, "malloc(3) returned non-aligned pointer");
+    TEST_ASSERT(fill_and_verify((char *)q, 3, 0x2A), "payload contents mismatch for odd-size allocation");
+    TEST_ASSERT(validate_heap() == 1, "heap validation failed after odd-size allocation");
+
+    my_free(q);
     my_free(p);
     return 1;
 }
@@ -142,7 +150,6 @@ static int test_coalescing_behavior(void) {
     my_free(d);
     my_free(g);
     my_free(f);
-    printf("Block count after edge frees: %zu\n", block_count());
     TEST_ASSERT(validate_heap() == 1, "heap invalid before center free in long-chain test");
     TEST_ASSERT(block_count() == baseline + 2,
                 "expected edge frees to form two coalesced regions plus center block");
@@ -177,6 +184,24 @@ static int test_multiple_allocations(void) {
     return 1;
 }
 
+static int test_calloc(void) {
+    size_t baseline = block_count();
+
+    void *c = my_calloc(4, 16);
+    TEST_ASSERT(c != NULL, "calloc failed");
+    TEST_ASSERT(block_count() == baseline + 1, "expected one block after calloc");
+    for (size_t i = 0; i < 64; i++) {
+        TEST_ASSERT(((unsigned char *)c)[i] == 0, "calloc did not zero memory");
+    }
+
+    my_free(c);
+
+    void *overflow = my_calloc(SIZE_MAX, 2);
+    TEST_ASSERT(overflow == NULL, "calloc should return NULL on overflow");
+    my_free(overflow);
+    return 1;
+}
+
 int main(void) {
     int passed = 0;
     int failed = 0;
@@ -185,6 +210,7 @@ int main(void) {
     run_test_isolated(test_split_behavior, "split behavior", &passed, &failed);
     run_test_isolated(test_coalescing_behavior, "coalescing behavior", &passed, &failed);
     run_test_isolated(test_multiple_allocations, "multiple allocations", &passed, &failed);
+    run_test_isolated(test_calloc, "calloc behavior", &passed, &failed);
 
     printf("Summary: passed=%d failed=%d\n", passed, failed);
     return !(!failed);
