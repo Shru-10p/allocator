@@ -34,6 +34,7 @@ Implemented:
 
 - `void *my_malloc(size_t size);`
 - `void *my_calloc(size_t nmemb, size_t size);`
+- `void *my_realloc(void *ptr, size_t size);`
 - `void  my_free(void *ptr);`
 
 Debug/inspection helpers:
@@ -48,6 +49,9 @@ Debug/inspection helpers:
 - `my_malloc(0)`, `my_calloc(0, x)` and `my_calloc(x, 0)` return `NULL`
 - `my_malloc` aligns request size to 8 bytes
 - `my_calloc` checks multiplication overflow (`nmemb > SIZE_MAX / size`) and zero-initializes memory
+- `my_realloc(NULL, n)` behaves like `my_malloc(n)`
+- `my_realloc(p, 0)` frees `p` and returns `NULL`
+- `my_realloc` attempts in-place shrink/growth first (including merging with a free next block) before allocate-copy-free fallback
 - `my_free(NULL)` is a no-op
 - invalid or duplicate frees are logged/ignored in debug mode, but not fully hardened
 
@@ -106,5 +110,4 @@ Then call `debug_print_heap()` and/or `validate_heap()` as needed.
 - `O(n)` first-fit scan per allocation
 - `sbrk()` backend only
 - no `mmap` path for large allocations
-- `realloc` not implemented yet
 - no hard security checks (canaries/guards/quarantine)

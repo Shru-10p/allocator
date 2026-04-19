@@ -39,6 +39,25 @@ int main(void) {
     }
     printf("\n");
 
+    int *grown = (int *)my_realloc(values, 8 * sizeof(*values));
+    if (!grown) {
+        fprintf(stderr, "my_realloc failed\n");
+        my_free(values);
+        my_free(name);
+        return 1;
+    }
+    values = grown;
+    debug_print_heap();
+
+    printf("after realloc to 8 ints (first 5 preserved): ");
+    for (int i = 0; i < 8; i++) {
+        if (i >= 5) {
+            values[i] = (i * 10);
+        }
+        printf("%d ", values[i]);
+    }
+    printf("\n");
+
     my_free(values);
     my_free(name);
     debug_print_heap();

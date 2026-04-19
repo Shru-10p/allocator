@@ -57,10 +57,6 @@ static void split_block(block_meta_t *b, size_t requested){
         debug_log("split_block: invalid block %p", (void *)b);
         return;
     }
-    if (!(b->free)) {
-        debug_log("split_block: block %p is not free", (void *)b);
-        return;
-    }
     if (requested > b->size) {
         debug_log("split_block: requested size %zu is larger than block size %zu", requested, b->size);
         return;
@@ -134,7 +130,7 @@ static void coalesce(block_meta_t *b) {
 void *my_malloc(size_t size) {
     if (size == 0) { return NULL; }
 
-    size = ALIGN(size);
+    size = ALIGN(size); // align to ALIGN_SIZE bytes
     debug_log("malloc(%zu)", size);
 
     if (size > (size_t)(INTPTR_MAX - (intptr_t)META_SIZE)) {
@@ -179,6 +175,56 @@ void *my_calloc(size_t nmemb, size_t size){
     memset(ptr, 0, total_size);
     debug_log("calloc: allocated and zeroed block=%p total_size=%zu", ptr, total_size);
     return ptr;
+}
+
+void *my_realloc(void *ptr, size_t size) {
+    size = ALIGN(size);
+    if (ptr == NULL) {
+        return my_malloc(size);
+    }
+    if (size == 0) {
+        my_free(ptr);
+        return NULL;
+    }
+
+    block_meta_t *b = ((block_meta_t *)ptr) - 1;
+
+    if (!is_valid_block(b)) {
+        debug_log("realloc: invalid pointer %p", ptr);
+        return NULL;
+    }
+
+    if (b->size >= size) {
+        split_block(b, size);
+        debug_log("realloc: resized in place block=%p old_size=%zu new_size=%zu", (void *)b, b->size, size);
+        return ptr;
+    }
+
+    // Try to grow in place by checking if the next block is free and has enough space to merge.
+    if (b->next != NULL && is_valid_block(b->next) && b->next->free) {
+        block_meta_t *next = b->next;
+        size_t merged_size = b->size + META_SIZE + next->size;
+        if (merged_size >= size) {
+            b->size = merged_size;
+            b->next = next->next;
+            if (next->next != NULL) { next->next->prev = b; }
+
+            split_block(b, size);
+            debug_log("realloc: grew in place block=%p old_size=%zu new_size=%zu", (void *)b, b->size, size);
+            return ptr;
+        }
+    }
+
+    void *new_ptr = my_malloc(size);
+    if (new_ptr == NULL) {
+        debug_log("realloc: malloc failed for new size %zu", size);
+        return NULL;
+    }
+
+    memcpy(new_ptr, ptr, b->size);
+    my_free(ptr);
+    debug_log("realloc: allocated new block=%p size=%zu and freed old block=%p", new_ptr, size, ptr);
+    return new_ptr;
 }
 
 void my_free(void *ptr) {

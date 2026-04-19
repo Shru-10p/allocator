@@ -202,6 +202,68 @@ static int test_calloc(void) {
     return 1;
 }
 
+static int test_realloc_behavior(void) {
+    // realloc(NULL, n) and realloc(p, 0) semantics
+    void *p = my_realloc(NULL, 24);
+    TEST_ASSERT(p != NULL, "realloc(NULL, n) should behave like malloc(n)");
+    TEST_ASSERT((((uintptr_t)p) & 7ULL) == 0, "realloc(NULL, n) returned non-aligned pointer");
+    TEST_ASSERT(validate_heap() == 1, "heap invalid after realloc(NULL, n)");
+
+    void *ret = my_realloc(p, 0);
+    TEST_ASSERT(ret == NULL, "realloc(p, 0) should return NULL");
+    TEST_ASSERT(validate_heap() == 1, "heap invalid after realloc(p, 0)");
+
+    // in-place growth with payload preservation
+    size_t baseline = block_count();
+
+    unsigned char pattern[32];
+    for (size_t i = 0; i < sizeof(pattern); i++) {
+        pattern[i] = (unsigned char)(0xA0 + (unsigned char)i);
+    }
+
+    char *a = (char *)my_malloc(32);
+    char *b = (char *)my_malloc(64);
+    TEST_ASSERT(a != NULL && b != NULL, "failed setup allocations for realloc in-place growth");
+    TEST_ASSERT(block_count() == baseline + 2, "expected two blocks in realloc in-place growth setup");
+
+    memcpy(a, pattern, sizeof(pattern));
+    my_free(b);
+    TEST_ASSERT(validate_heap() == 1, "heap invalid before realloc in-place growth");
+
+    char *grown = (char *)my_realloc(a, 80);
+    TEST_ASSERT(grown == a, "realloc should grow in place by consuming next free block");
+    TEST_ASSERT(block_count() == baseline + 2, "expected in-place growth to split and keep two blocks");
+    TEST_ASSERT(memcmp(grown, pattern, sizeof(pattern)) == 0,
+                "realloc in-place growth did not preserve old payload contents");
+    TEST_ASSERT(validate_heap() == 1, "heap invalid after realloc in-place growth");
+
+    my_free(grown);
+    TEST_ASSERT(validate_heap() == 1, "heap invalid after freeing grown block");
+
+    // shrink-in-place with payload preservation
+    baseline = block_count();
+
+    char *q = (char *)my_malloc(128);
+    TEST_ASSERT(q != NULL, "initial allocation failed for realloc shrink test");
+    TEST_ASSERT(block_count() == baseline + 1, "expected one block after initial allocation");
+
+    for (size_t i = 0; i < 128; i++) {
+        q[i] = (char)(i & 0x7F);
+    }
+
+    char *shrunk = (char *)my_realloc(q, 24);
+    TEST_ASSERT(shrunk == q, "realloc shrink should keep pointer when block is already large enough");
+    TEST_ASSERT(block_count() == baseline + 2, "expected shrink to split off a free remainder block");
+    for (size_t i = 0; i < 24; i++) {
+        TEST_ASSERT(shrunk[i] == (char)(i & 0x7F), "realloc shrink did not preserve prefix payload");
+    }
+    TEST_ASSERT(validate_heap() == 1, "heap invalid after realloc shrink");
+
+    my_free(shrunk);
+    TEST_ASSERT(validate_heap() == 1, "heap invalid after freeing shrunk block");
+    return 1;
+}
+
 int main(void) {
     int passed = 0;
     int failed = 0;
@@ -211,6 +273,7 @@ int main(void) {
     run_test_isolated(test_coalescing_behavior, "coalescing behavior", &passed, &failed);
     run_test_isolated(test_multiple_allocations, "multiple allocations", &passed, &failed);
     run_test_isolated(test_calloc, "calloc behavior", &passed, &failed);
+    run_test_isolated(test_realloc_behavior, "realloc behavior", &passed, &failed);
 
     printf("Summary: passed=%d failed=%d\n", passed, failed);
     return !(!failed);
