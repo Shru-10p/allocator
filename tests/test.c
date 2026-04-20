@@ -187,7 +187,7 @@ static int test_multiple_allocations(void) {
 static int test_calloc(void) {
     size_t baseline = block_count();
 
-    void *c = my_calloc(4, 16);
+    void *c = my_calloc(4, 15);
     TEST_ASSERT(c != NULL, "calloc failed");
     TEST_ASSERT(block_count() == baseline + 1, "expected one block after calloc");
     for (size_t i = 0; i < 64; i++) {
@@ -264,9 +264,40 @@ static int test_realloc_behavior(void) {
     return 1;
 }
 
-int main(void) {
+static int test_invalid_free_pointers(void) {
+    size_t baseline = block_count();
+
+    char *p = (char *)my_malloc(64);
+    char *q = (char *)my_malloc(16);
+    TEST_ASSERT(p != NULL && q != NULL, "setup allocations failed for invalid-free tests");
+    TEST_ASSERT(block_count() == baseline + 2, "expected two blocks in invalid-free setup");
+
+    memset(p, 0x7B, 64);
+
+    // Interior pointers are invalid for free; allocator should reject without corrupting heap.
+    my_free(p + 8);
+    TEST_ASSERT(validate_heap() == 1, "heap invalid after interior-pointer free attempt");
+    TEST_ASSERT(block_count() == baseline + 2, "block count changed after interior-pointer free attempt");
+    for (size_t i = 0; i < 64; i++) {
+        TEST_ASSERT((unsigned char)p[i] == 0x7B, "payload changed after interior-pointer free attempt");
+    }
+
+    // Foreign pointer (stack memory) should also be ignored safely.
+    int stack_value = 42;
+    my_free(&stack_value);
+    TEST_ASSERT(validate_heap() == 1, "heap invalid after stack-pointer free attempt");
+    TEST_ASSERT(block_count() == baseline + 2, "block count changed after stack-pointer free attempt");
+
+    my_free(q);
+    my_free(p);
+    TEST_ASSERT(validate_heap() == 1, "heap invalid after cleanup in invalid-free test");
+    return 1;
+}
+
+int main(int argc, char *argv[]) {
     int passed = 0;
     int failed = 0;
+    set_debug(argv[1] && strcmp(argv[1], "--debug") == 0);
 
     run_test_isolated(test_basic_allocation_and_null_ops, "basic allocation and null ops", &passed, &failed);
     run_test_isolated(test_split_behavior, "split behavior", &passed, &failed);
@@ -274,6 +305,7 @@ int main(void) {
     run_test_isolated(test_multiple_allocations, "multiple allocations", &passed, &failed);
     run_test_isolated(test_calloc, "calloc behavior", &passed, &failed);
     run_test_isolated(test_realloc_behavior, "realloc behavior", &passed, &failed);
+    run_test_isolated(test_invalid_free_pointers, "invalid free pointers", &passed, &failed);
 
     printf("Summary: passed=%d failed=%d\n", passed, failed);
     return !(!failed);

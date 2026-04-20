@@ -9,7 +9,8 @@ TESTBIN := tests/test
 EXAMPLESRC := examples/example.c
 EXAMPLEBIN := examples/example
 
-.PHONY: all clean test example
+.PHONY: all clean test test-debug example example-debug
+
 
 all: $(TESTBIN) $(EXAMPLEBIN)
 
@@ -22,8 +23,15 @@ $(EXAMPLEBIN): $(SRC) $(EXAMPLESRC) src/alloc.h
 test: $(TESTBIN)
 	./$(TESTBIN)
 
+test-debug: $(TESTBIN)
+	./$(TESTBIN) --debug
+
+
 example: $(EXAMPLEBIN)
 	./$(EXAMPLEBIN)
+
+example-debug: $(EXAMPLEBIN)
+	./$(EXAMPLEBIN) --debug
 
 clean:
 	rm -f $(TESTBIN) $(EXAMPLEBIN) *.o src/*.o tests/*.o examples/*.o

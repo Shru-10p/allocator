@@ -14,6 +14,10 @@ int is_valid_block(const block_meta_t *b) {
     return (b != NULL) && (b->magic == BLOCK_MAGIC) && (b->size != 0);
 }
 
+static size_t total_block_size(size_t payload_size) {
+    return META_SIZE + payload_size;
+}
+
 static block_meta_t *find_free_block(block_meta_t **last, size_t size) {
     block_meta_t *cur = g_base;
     *last = NULL;
@@ -165,15 +169,26 @@ void *my_calloc(size_t nmemb, size_t size){
         return NULL;
     }
 
-    size_t total_size = nmemb * size;
-    void *ptr = my_malloc(total_size);
+    size_t requested_total = nmemb * size;
+    void *ptr = my_malloc(requested_total);
     if (ptr == NULL) {
-        debug_log("calloc: malloc failed for total size %zu", total_size);
+        debug_log("calloc: malloc failed for requested=%zu", requested_total);
         return NULL;
     }
 
-    memset(ptr, 0, total_size);
-    debug_log("calloc: allocated and zeroed block=%p total_size=%zu", ptr, total_size);
+    block_meta_t *b = ((block_meta_t *)ptr) - 1;
+    size_t payload_size = b->size;
+
+    memset(ptr, 0, requested_total);
+    debug_log(
+        "calloc: block=%p nmemb=%zu size=%zu requested=%zu payload=%zu total_block=%zu",
+        ptr,
+        nmemb,
+        size,
+        requested_total,
+        payload_size,
+        total_block_size(payload_size)
+    );
     return ptr;
 }
 
@@ -195,8 +210,17 @@ void *my_realloc(void *ptr, size_t size) {
     }
 
     if (b->size >= size) {
+        size_t old_payload = b->size;
         split_block(b, size);
-        debug_log("realloc: resized in place block=%p old_size=%zu new_size=%zu", (void *)b, b->size, size);
+        debug_log(
+            "realloc: resized in place block=%p requested=%zu old_payload=%zu new_payload=%zu old_total=%zu new_total=%zu",
+            (void *)b,
+            size,
+            old_payload,
+            b->size,
+            total_block_size(old_payload),
+            total_block_size(b->size)
+        );
         return ptr;
     }
 
@@ -205,12 +229,21 @@ void *my_realloc(void *ptr, size_t size) {
         block_meta_t *next = b->next;
         size_t merged_size = b->size + META_SIZE + next->size;
         if (merged_size >= size) {
+            size_t old_payload = b->size;
             b->size = merged_size;
             b->next = next->next;
             if (next->next != NULL) { next->next->prev = b; }
 
             split_block(b, size);
-            debug_log("realloc: grew in place block=%p old_size=%zu new_size=%zu", (void *)b, b->size, size);
+            debug_log(
+                "realloc: grew in place block=%p requested=%zu old_payload=%zu new_payload=%zu old_total=%zu new_total=%zu",
+                (void *)b,
+                size,
+                old_payload,
+                b->size,
+                total_block_size(old_payload),
+                total_block_size(b->size)
+            );
             return ptr;
         }
     }
@@ -223,7 +256,18 @@ void *my_realloc(void *ptr, size_t size) {
 
     memcpy(new_ptr, ptr, b->size);
     my_free(ptr);
-    debug_log("realloc: allocated new block=%p size=%zu and freed old block=%p", new_ptr, size, ptr);
+
+    block_meta_t *new_b = ((block_meta_t *)new_ptr) - 1;
+    debug_log(
+        "realloc: moved block old_ptr=%p new_ptr=%p requested=%zu old_payload=%zu new_payload=%zu old_total=%zu new_total=%zu",
+        ptr,
+        new_ptr,
+        size,
+        b->size,
+        new_b->size,
+        total_block_size(b->size),
+        total_block_size(new_b->size)
+    );
     return new_ptr;
 }
 

@@ -2,8 +2,8 @@
 #include <stdio.h>
 #include <string.h>
 
-int main(void) {
-    set_debug(0);
+int main(int argc, char *argv[]) {
+    set_debug(argv[1] && strcmp(argv[1], "--debug") == 0);
 
     char *name = (char *)my_malloc(32);
     if (!name) {
