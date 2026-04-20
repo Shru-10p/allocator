@@ -294,10 +294,49 @@ static int test_invalid_free_pointers(void) {
     return 1;
 }
 
+static int test_large_allocation_uses_mmap(void) {
+    const size_t large_size = 1ULL << 20; // safely above mmap threshold
+    size_t baseline = block_count();
+
+    char *small = (char *)my_malloc(64);
+    TEST_ASSERT(small != NULL, "small allocation failed in mmap test setup");
+    TEST_ASSERT(block_count() == baseline + 1, "small allocation should appear in heap list");
+    TEST_ASSERT(validate_heap() == 1, "heap invalid after small allocation in mmap test");
+
+    char *large = (char *)my_malloc(large_size);
+    TEST_ASSERT(large != NULL, "large allocation failed");
+    TEST_ASSERT((((uintptr_t)large) & 7ULL) == 0, "large allocation returned non-aligned pointer");
+    TEST_ASSERT(block_count() == baseline + 1,
+                "large mmap allocation should not be inserted in the sbrk heap list");
+    TEST_ASSERT(validate_heap() == 1, "heap invalid after large mmap allocation");
+
+    for (size_t i = 0; i < 256; i++) {
+        large[i] = (char)(i & 0x7F);
+    }
+
+    char *grown = (char *)my_realloc(large, large_size + 8192);
+    TEST_ASSERT(grown != NULL, "realloc on mmap-backed block failed");
+    for (size_t i = 0; i < 256; i++) {
+        TEST_ASSERT(grown[i] == (char)(i & 0x7F), "realloc on mmap-backed block did not preserve payload");
+    }
+    TEST_ASSERT(block_count() == baseline + 1,
+                "mmap realloc should not modify the sbrk heap list");
+    TEST_ASSERT(validate_heap() == 1, "heap invalid after realloc on mmap-backed block");
+
+    my_free(grown);
+    TEST_ASSERT(block_count() == baseline + 1,
+                "freeing mmap-backed block should not change sbrk heap block count");
+    TEST_ASSERT(validate_heap() == 1, "heap invalid after freeing mmap-backed block");
+
+    my_free(small);
+    TEST_ASSERT(validate_heap() == 1, "heap invalid after mmap test cleanup");
+    return 1;
+}
+
 int main(int argc, char *argv[]) {
     int passed = 0;
     int failed = 0;
-    set_debug(argv[1] && strcmp(argv[1], "--debug") == 0);
+    set_debug((argc > 1) && strcmp(argv[1], "--debug") == 0);
 
     run_test_isolated(test_basic_allocation_and_null_ops, "basic allocation and null ops", &passed, &failed);
     run_test_isolated(test_split_behavior, "split behavior", &passed, &failed);
@@ -306,6 +345,7 @@ int main(int argc, char *argv[]) {
     run_test_isolated(test_calloc, "calloc behavior", &passed, &failed);
     run_test_isolated(test_realloc_behavior, "realloc behavior", &passed, &failed);
     run_test_isolated(test_invalid_free_pointers, "invalid free pointers", &passed, &failed);
+    run_test_isolated(test_large_allocation_uses_mmap, "large allocation (mmap)", &passed, &failed);
 
     printf("Summary: passed=%d failed=%d\n", passed, failed);
     return !(!failed);

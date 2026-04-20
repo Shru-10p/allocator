@@ -4,6 +4,7 @@
 #include "./internal/internal.h"
 
 #include <limits.h>
+#include <sys/mman.h> // for mmap, munmap
 #include <stdint.h>
 #include <string.h> // for memset
 #include <unistd.h>
@@ -16,6 +17,38 @@ int is_valid_block(const block_meta_t *b) {
 
 static size_t total_block_size(size_t payload_size) {
     return META_SIZE + payload_size;
+}
+
+static size_t round_up_to_multiple(size_t value, size_t multiple) {
+    size_t remainder = value % multiple;
+
+    if (remainder == 0) {
+        return value;
+    }
+
+    size_t increment = multiple - remainder;
+    if (value > SIZE_MAX - increment) {
+        return 0;
+    }
+
+    return value + increment;
+}
+
+static void init_block_meta(
+    block_meta_t *b,
+    size_t size,
+    size_t mapping_size,
+    block_meta_t *prev,
+    block_meta_t *next,
+    uint8_t use_mmap
+) {
+    b->size = size;
+    b->mapping_size = mapping_size;
+    b->next = next;
+    b->prev = prev;
+    b->magic = BLOCK_MAGIC;
+    b->free = 0;
+    b->use_mmap = use_mmap;
 }
 
 static block_meta_t *find_free_block(block_meta_t **last, size_t size) {
@@ -37,21 +70,46 @@ static block_meta_t *find_free_block(block_meta_t **last, size_t size) {
     return NULL;
 }
 
-static block_meta_t *request_space(block_meta_t *last, size_t size) {
-    void *mem = sbrk((intptr_t)(META_SIZE + size));
-    if (mem == (void *)-1) return NULL;
+static block_meta_t *request_space(block_meta_t *last, size_t size, uint8_t use_mmap) {
+    void *mem;
+    size_t mapping_size = 0;
+
+    if (size > SIZE_MAX - META_SIZE) {
+        return NULL;
+    }
+
+    if (use_mmap) {
+        size_t total_size = META_SIZE + size;
+        mapping_size = round_up_to_multiple(total_size, MMAP_THRESHOLD);
+        if (mapping_size == 0) {
+            return NULL;
+        }
+
+        mem = mmap(NULL, mapping_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (mem == MAP_FAILED) {
+            return NULL;
+        }
+    } else {
+        mem = sbrk((intptr_t)(META_SIZE + size));
+        if (mem == (void *)-1) {
+            return NULL;
+        }
+    }
 
     block_meta_t *b = (block_meta_t *)mem;
-    b->size  = size;
-    b->next  = NULL;
-    b->prev  = last;
-    b->magic = BLOCK_MAGIC;
-    b->free  = 0;
+    init_block_meta(b, size, mapping_size, use_mmap ? NULL : last, NULL, use_mmap);
 
-    if (last != NULL) { last->next = b; }
-    else { g_base = b; }
+    if (!use_mmap) {
+        if (last != NULL) {
+            last->next = b;
+        } else {
+            g_base = b;
+        }
+        debug_log("request_space: new sbrk block=%p size=%zu", (void *)b, size);
+    } else {
+        debug_log("request_space: new mmap block=%p size=%zu mapping_size=%zu", (void *)b, size, mapping_size);
+    }
 
-    debug_log("request_space: new block=%p size=%zu", (void *)b, size);
     return b;
 }
 
@@ -59,6 +117,10 @@ static void split_block(block_meta_t *b, size_t requested){
     if (b == NULL) { return; }
     if (!is_valid_block(b)) {
         debug_log("split_block: invalid block %p", (void *)b);
+        return;
+    }
+    if (b->use_mmap) {
+        debug_log("split_block: mmap block %p is not split", (void *)b);
         return;
     }
     if (requested > b->size) {
@@ -75,10 +137,7 @@ static void split_block(block_meta_t *b, size_t requested){
     block_meta_t *old_next = b->next;
 
     block_meta_t *remainder = (block_meta_t *)((char *)(b + 1) + requested);
-    remainder->size = remaining_size - META_SIZE;
-    remainder->next = old_next;
-    remainder->prev = b;
-    remainder->magic = BLOCK_MAGIC;
+    init_block_meta(remainder, remaining_size - META_SIZE, 0, b, old_next, 0);
     remainder->free = 1;
 
     if (old_next != NULL) {
@@ -142,6 +201,16 @@ void *my_malloc(size_t size) {
         return NULL;
     }
 
+    if (size >= MMAP_THRESHOLD) {
+        block_meta_t *mmap_block = request_space(NULL, size, 1);
+        if (mmap_block == NULL) {
+            debug_log("malloc: mmap failed for size %zu", size);
+            return NULL;
+        }
+
+        return (void *)(mmap_block + 1);
+    }
+
     block_meta_t *last = NULL;
     block_meta_t *b = find_free_block(&last, size);
 
@@ -152,7 +221,7 @@ void *my_malloc(size_t size) {
         return (void *)(b + 1);
     }
 
-    b = request_space(last, size);
+    b = request_space(last, size, 0);
     if (b == NULL) {
         debug_log("malloc: sbrk failed");
         return NULL;
@@ -207,6 +276,31 @@ void *my_realloc(void *ptr, size_t size) {
     if (!is_valid_block(b)) {
         debug_log("realloc: invalid pointer %p", ptr);
         return NULL;
+    }
+
+    if (b->use_mmap) {
+        void *new_ptr = my_malloc(size);
+        size_t copy_size;
+        size_t old_payload = b->size;
+
+        if (new_ptr == NULL) {
+            debug_log("realloc: mmap block copy allocation failed for new size %zu", size);
+            return NULL;
+        }
+
+        copy_size = b->size < size ? b->size : size;
+        memcpy(new_ptr, ptr, copy_size);
+        my_free(ptr);
+
+        debug_log(
+            "realloc: moved mmap block old_ptr=%p new_ptr=%p requested=%zu old_payload=%zu new_payload=%zu",
+            ptr,
+            new_ptr,
+            size,
+            old_payload,
+            ((block_meta_t *)new_ptr - 1)->size
+        );
+        return new_ptr;
     }
 
     if (b->size >= size) {
@@ -278,6 +372,19 @@ void my_free(void *ptr) {
 
     if (!is_valid_block(b)) {
         debug_log("free: invalid pointer %p", ptr);
+        return;
+    }
+
+    if (b->use_mmap) {
+        size_t mapping_size = b->mapping_size;
+
+        if (mapping_size == 0) {
+            debug_log("free: invalid mmap block %p", (void *)b);
+            return;
+        }
+
+        debug_log("free: munmap block=%p size=%zu mapping_size=%zu", (void *)b, b->size, mapping_size);
+        munmap((void *)b, mapping_size);
         return;
     }
 
